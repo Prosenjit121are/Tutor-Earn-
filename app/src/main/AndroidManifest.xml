@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application
+        android:name=".TutorEarnApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TutorEarn">
+
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
+
+        <activity
+            android:name=".WelcomeActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TutorEarn">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".LoginActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TutorEarn"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".SignUpActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TutorEarn"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".SplashActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TutorEarn.Splash" />
+
+        <activity
+            android:name=".HomeActivity"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TutorEarn" />
+
+        <activity
+            android:name=".PrimeSurveyActivity"
+            android:exported="false"
+            android:label="@string/feature_prime_survey"
+            android:theme="@style/Theme.TutorEarn" />
+
+        <activity
+            android:name=".SurveyRewardsActivity"
+            android:exported="false"
+            android:label="@string/survey_rewards_title"
+            android:theme="@style/Theme.TutorEarn" />
+
+    </application>
+
+</manifest>
