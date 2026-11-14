@@ -34,6 +34,30 @@
               ".validate": "newData.hasChildren(['transactionId', 'surveyType', 'amount', 'claimedAt']) && newData.child('amount').val() === 1050 && newData.child('surveyType').val() === 'prime_survey' && newData.child('claimedAt').val() <= now"
             }
           }
+        },
+        "surveyRewards": {
+          "lastClaimAt": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isNumber() && newData.val() <= now && (!data.exists() || newData.val() - data.val() >= 86400000)"
+          },
+          "nextClaimAt": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isNumber()"
+          },
+          "totalClaims": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "totalCoinsEarned": {
+            ".write": "auth != null && auth.uid === $uid",
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          },
+          "claims": {
+            "$transactionId": {
+              ".write": "auth != null && auth.uid === $uid && !data.exists()",
+              ".validate": "newData.hasChildren(['transactionId', 'amount', 'claimedAt']) && newData.child('amount').val() === 500 && newData.child('claimedAt').val() <= now"
+            }
+          }
         }
       }
     }

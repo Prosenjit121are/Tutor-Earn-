@@ -132,6 +132,10 @@ public class CoinBalanceRepository {
         }
     }
 
+    public static boolean hasTestDriverOverride() {
+        return Holder.testDriverOverride != null;
+    }
+
     @Nullable
     private static CoinBalanceRepository instance;
 

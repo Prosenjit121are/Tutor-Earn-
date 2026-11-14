@@ -66,9 +66,16 @@ public class TutorEarnRobolectricTest {
         PrimeSurveyAdManager.Holder.setInterstitialDriverOverride(null);
         PrimeSurveyAdManager.Holder.setRewardedDriverOverride(null);
         SurveyRewardsAdManager.Holder.setRewardedDriverOverride(null);
+        SurveyRewardsRepository.Holder.setTimeProviderOverride(null);
+        SurveyRewardsRepository.Holder.setBackendOverride(null);
         TutorEarnApplication.AdInitHolder.setDriverOverride(null);
         CoinBalanceRepository.Holder.setDriverOverride(null);
         CoinBalanceRepository.resetForTest(ApplicationProvider.getApplicationContext());
+        ApplicationProvider.getApplicationContext()
+                .getSharedPreferences("tutor_earn_survey_rewards_ledger", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit();
     }
 
     @Test
@@ -1433,6 +1440,29 @@ public class TutorEarnRobolectricTest {
             }
         });
 
+        final long[] fakeServerNow = {1_700_000_000_000L};
+        SurveyRewardsRepository.Holder.setTimeProviderOverride(new RewardTimeProvider() {
+            @Override
+            public long elapsedRealtimeMs() {
+                return 10_000L;
+            }
+
+            @Override
+            public long wallClockMs() {
+                return fakeServerNow[0];
+            }
+
+            @Override
+            public int getBootCount(@androidx.annotation.NonNull Context ctx) {
+                return 1;
+            }
+
+            @Override
+            public void fetchAuthoritativeServerTimeMs(@androidx.annotation.NonNull ServerTimeCallback callback) {
+                callback.onResult(fakeServerNow[0]);
+            }
+        });
+
         TutorEarnApplication.resetMobileAdsForTest();
         TutorEarnApplication.AdInitHolder.setDriverOverride((ctx, onInitialized) -> onInitialized.run());
 
@@ -1468,7 +1498,7 @@ public class TutorEarnRobolectricTest {
                 "Watch a rewarded advertisement and claim your 500 coins!",
                 sentenceView.getText().toString()
         );
-        assertEquals("CLAIM", claimButtonText.getText().toString());
+        assertEquals("CLAIM 500 COINS", claimButtonText.getText().toString());
         assertEquals(View.GONE, statusView.getVisibility());
         assertEquals(View.GONE, claimProgress.getVisibility());
 
@@ -1485,14 +1515,14 @@ public class TutorEarnRobolectricTest {
         assertEquals(2, callbacks.size());
         org.junit.Assert.assertFalse(claimButton.isEnabled());
         assertEquals(View.VISIBLE, claimProgress.getVisibility());
-        assertEquals("Loading...", claimButtonText.getText().toString());
+        assertEquals("Loading Advertisement...", claimButtonText.getText().toString());
 
         callbacks.get(1).onFailed("No fill", 3);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
         assertEquals(0L, remoteBalance[0]);
         assertEquals(View.VISIBLE, statusView.getVisibility());
         assertEquals(
-                "Rewarded advertisement unavailable right now. Please try again.",
+                "Advertisement unavailable. Please try again.",
                 statusView.getText().toString()
         );
         org.junit.Assert.assertTrue(claimButton.isEnabled());
@@ -1545,16 +1575,19 @@ public class TutorEarnRobolectricTest {
         });
         Shadows.shadowOf(Looper.getMainLooper()).idle();
 
-        // 3. Tap CLAIM -> preloaded rewarded ad shows, OnUserEarnedRewardListener fires -> credits 500 coins + exact message
+        // 3. Tap CLAIM -> preloaded rewarded ad shows, OnUserEarnedRewardListener fires -> credits 500 coins + exact message + enforces 24h cooldown
         claimButton.performClick();
         Shadows.shadowOf(Looper.getMainLooper()).idle();
         assertEquals(500L, remoteBalance[0]);
         assertEquals(500L, CoinBalanceRepository.getInstance(activity).getCurrentBalance());
-        assertEquals("Congratulations! 500 Coins Added Successfully!", statusView.getText().toString());
+        assertEquals("500 Coins Added Successfully!", statusView.getText().toString());
         assertEquals(View.VISIBLE, statusView.getVisibility());
-        org.junit.Assert.assertTrue(claimButton.isEnabled());
+        org.junit.Assert.assertFalse(claimButton.isEnabled());
+        TextView cooldownView = activity.findViewById(R.id.tv_survey_rewards_cooldown);
+        assertEquals(View.VISIBLE, cooldownView.getVisibility());
+        org.junit.Assert.assertTrue(cooldownView.getText().toString().startsWith("Available again in "));
         assertEquals(View.GONE, claimProgress.getVisibility());
-        assertEquals("CLAIM", claimButtonText.getText().toString());
+        assertEquals("CLAIM 500 COINS", claimButtonText.getText().toString());
 
         // 4. Repository rejects wrong reward amount for SURVEY_REWARDS (!= 500)
         final boolean[] invalidRejected = {true};
@@ -1567,5 +1600,172 @@ public class TutorEarnRobolectricTest {
         );
         org.junit.Assert.assertFalse(invalidRejected[0]);
         assertEquals(500L, remoteBalance[0]);
+    }
+
+    @Test
+    public void surveyRewardsEnforces24HourAccountCooldownAcrossRestartsLogoutAndClockTampering() {
+        Context context = ApplicationProvider.getApplicationContext();
+        context.getSharedPreferences("tutor_earn_survey_rewards_ledger", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit();
+
+        final long[] serverTimeMs = {1_700_000_000_000L};
+        final long[] elapsedMs = {10_000L};
+        final long[] wallClockMs = {1_700_000_000_000L};
+        final int[] bootCount = {5};
+        final String[] activeUid = {"uid_alpha"};
+        final java.util.Map<String, Long> remoteLastClaimMap = new java.util.HashMap<>();
+        final java.util.Map<String, Long> remoteClaimsCount = new java.util.HashMap<>();
+        final java.util.Map<String, Long> remoteCoinsEarned = new java.util.HashMap<>();
+        final java.util.Map<String, Long> remoteBalances = new java.util.HashMap<>();
+        final java.util.Set<String> processedTxIds = new java.util.HashSet<>();
+
+        RewardTimeProvider fakeTime = new RewardTimeProvider() {
+            @Override
+            public long elapsedRealtimeMs() {
+                return elapsedMs[0];
+            }
+
+            @Override
+            public long wallClockMs() {
+                return wallClockMs[0];
+            }
+
+            @Override
+            public int getBootCount(@androidx.annotation.NonNull Context ctx) {
+                return bootCount[0];
+            }
+
+            @Override
+            public void fetchAuthoritativeServerTimeMs(@androidx.annotation.NonNull ServerTimeCallback callback) {
+                callback.onResult(serverTimeMs[0]);
+            }
+        };
+
+        FirebaseSurveyRewardsBackend fakeBackend = new FirebaseSurveyRewardsBackend(context) {
+            @Override
+            public boolean isConfiguredAndAuthenticated() {
+                return activeUid[0] != null;
+            }
+
+            @androidx.annotation.Nullable
+            @Override
+            public String getAuthenticatedUid() {
+                return activeUid[0];
+            }
+
+            @Override
+            public void fetchRemoteClaimStatus(@androidx.annotation.NonNull RemoteEligibilityCallback callback) {
+                String uid = activeUid[0];
+                long lastClaim = uid != null && remoteLastClaimMap.containsKey(uid) ? remoteLastClaimMap.get(uid) : 0L;
+                long claims = uid != null && remoteClaimsCount.containsKey(uid) ? remoteClaimsCount.get(uid) : 0L;
+                long coins = uid != null && remoteCoinsEarned.containsKey(uid) ? remoteCoinsEarned.get(uid) : 0L;
+                callback.onResult(uid != null, lastClaim, claims, coins, serverTimeMs[0], null);
+            }
+
+            @Override
+            public void recordVerifiedRewardTransaction(
+                    @androidx.annotation.NonNull String transactionId,
+                    int rewardCoins,
+                    long cooldownDurationMs,
+                    long estimatedServerNowMs,
+                    @androidx.annotation.NonNull RemoteClaimCallback callback
+            ) {
+                String uid = activeUid[0];
+                if (uid == null) {
+                    callback.onComplete(false, -1L, -1L, "Unauthenticated");
+                    return;
+                }
+                if (!processedTxIds.add(uid + ":" + transactionId)) {
+                    callback.onComplete(false, -1L, -1L, "Duplicate transaction rejected");
+                    return;
+                }
+                long lastClaim = remoteLastClaimMap.containsKey(uid) ? remoteLastClaimMap.get(uid) : 0L;
+                if (lastClaim > 0L && (estimatedServerNowMs - lastClaim) < cooldownDurationMs) {
+                    callback.onComplete(false, -1L, -1L, "24-hour cooldown active");
+                    return;
+                }
+                long updatedBal = (remoteBalances.containsKey(uid) ? remoteBalances.get(uid) : 0L) + rewardCoins;
+                remoteBalances.put(uid, updatedBal);
+                remoteLastClaimMap.put(uid, estimatedServerNowMs);
+                remoteClaimsCount.put(uid, (remoteClaimsCount.containsKey(uid) ? remoteClaimsCount.get(uid) : 0L) + 1L);
+                remoteCoinsEarned.put(uid, (remoteCoinsEarned.containsKey(uid) ? remoteCoinsEarned.get(uid) : 0L) + rewardCoins);
+                callback.onComplete(true, estimatedServerNowMs, updatedBal, null);
+            }
+        };
+
+        CoinBalanceRepository coinRepo = CoinBalanceRepository.getInstance(context);
+        SurveyRewardsRepository repo = new SurveyRewardsRepository(context, fakeTime, fakeBackend, coinRepo);
+
+        // 1. Rewarded Ad NOT earned -> rejected, 0 coins
+        final boolean[] unverifiedOk = {true};
+        repo.commitVerifiedReward(false, "tx_sr_unverified", (success, msg, state) -> unverifiedOk[0] = success);
+        org.junit.Assert.assertFalse(unverifiedOk[0]);
+        assertEquals(0L, remoteBalances.containsKey("uid_alpha") ? remoteBalances.get("uid_alpha") : 0L);
+
+        // 2. First successful claim -> +500 coins, cooldown active
+        final boolean[] firstOk = {false};
+        repo.commitVerifiedReward(true, "tx_sr_1", (success, msg, state) -> {
+            firstOk[0] = success;
+            assertEquals("500 Coins Added Successfully!", msg);
+            org.junit.Assert.assertFalse(state.canClaim);
+            assertEquals(SurveyRewardsRepository.COOLDOWN_DURATION_MS, state.remainingCooldownMs);
+        });
+        org.junit.Assert.assertTrue(firstOk[0]);
+        assertEquals(500L, (long) remoteBalances.get("uid_alpha"));
+        assertEquals(1L, (long) remoteClaimsCount.get("uid_alpha"));
+        assertEquals(500L, (long) remoteCoinsEarned.get("uid_alpha"));
+
+        // 3. Duplicate transaction / second claim before 24h -> rejected
+        final boolean[] dupOk = {true};
+        repo.commitVerifiedReward(true, "tx_sr_1", (success, msg, state) -> dupOk[0] = success);
+        org.junit.Assert.assertFalse(dupOk[0]);
+
+        final boolean[] secondEarlyOk = {true};
+        repo.commitVerifiedReward(true, "tx_sr_2", (success, msg, state) -> secondEarlyOk[0] = success);
+        org.junit.Assert.assertFalse(secondEarlyOk[0]);
+        assertEquals(500L, (long) remoteBalances.get("uid_alpha"));
+
+        // 4. Device clock pushed +36h offline while only 5 real minutes passed -> STILL blocked
+        serverTimeMs[0] = -1L;
+        wallClockMs[0] += 36L * 60L * 60L * 1000L;
+        elapsedMs[0] += 5L * 60L * 1000L;
+        final boolean[] offlineTamperCanClaim = {true};
+        repo.verifyClaimEligibility(state -> offlineTamperCanClaim[0] = state.canClaim);
+        org.junit.Assert.assertFalse(offlineTamperCanClaim[0]);
+
+        // 5. Simulate app reinstall / login on another device (clear local prefs) -> Firebase uid_alpha still blocked
+        context.getSharedPreferences("tutor_earn_survey_rewards_ledger", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .commit();
+        serverTimeMs[0] = 1_700_000_000_000L + (12L * 60L * 60L * 1000L);
+        SurveyRewardsRepository reinstalledRepo = new SurveyRewardsRepository(context, fakeTime, fakeBackend, coinRepo);
+        final boolean[] reinstalledCanClaim = {true};
+        reinstalledRepo.verifyClaimEligibility(state -> {
+            reinstalledCanClaim[0] = state.canClaim;
+            assertEquals(12L * 60L * 60L * 1000L, state.remainingCooldownMs);
+        });
+        org.junit.Assert.assertFalse(reinstalledCanClaim[0]);
+
+        // 6. Logout and login as a different account (uid_beta) -> independent eligibility
+        activeUid[0] = "uid_beta";
+        final boolean[] betaCanClaim = {false};
+        reinstalledRepo.verifyClaimEligibility(state -> betaCanClaim[0] = state.canClaim);
+        org.junit.Assert.assertTrue(betaCanClaim[0]);
+
+        // 7. Switch back to uid_alpha after 24h+1s -> eligible and credits next 500 coins
+        activeUid[0] = "uid_alpha";
+        serverTimeMs[0] = 1_700_000_000_000L + SurveyRewardsRepository.COOLDOWN_DURATION_MS + 1000L;
+        final boolean[] after24hOk = {false};
+        reinstalledRepo.commitVerifiedReward(true, "tx_sr_after_24h", (success, msg, state) -> {
+            after24hOk[0] = success;
+            org.junit.Assert.assertFalse(state.canClaim);
+        });
+        org.junit.Assert.assertTrue(after24hOk[0]);
+        assertEquals(1000L, (long) remoteBalances.get("uid_alpha"));
+        assertEquals(2L, (long) remoteClaimsCount.get("uid_alpha"));
+        assertEquals(1000L, (long) remoteCoinsEarned.get("uid_alpha"));
     }
 }

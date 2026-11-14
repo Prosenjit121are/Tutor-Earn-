@@ -103,11 +103,13 @@
     <!-- Survey Rewards Screen -->
     <string name="survey_rewards_title">Survey Rewards</string>
     <string name="survey_rewards_sentence">Watch a rewarded advertisement and claim your 500 coins!</string>
-    <string name="survey_rewards_claim_button">CLAIM</string>
-    <string name="survey_rewards_loading_ad">Loading...</string>
-    <string name="survey_rewards_success">Congratulations! 500 Coins Added Successfully!</string>
+    <string name="survey_rewards_claim_button">CLAIM 500 COINS</string>
+    <string name="survey_rewards_claim_500_coins">CLAIM 500 COINS</string>
+    <string name="survey_rewards_loading_ad">Loading Advertisement...</string>
+    <string name="survey_rewards_success">500 Coins Added Successfully!</string>
+    <string name="survey_rewards_cooldown_remaining">Available again in %1$s</string>
     <string name="survey_rewards_ad_not_completed">Rewarded video was closed early. Complete the video to claim 500 coins.</string>
-    <string name="survey_rewards_ad_unavailable">Rewarded advertisement unavailable right now. Please try again.</string>
+    <string name="survey_rewards_ad_unavailable">Advertisement unavailable. Please try again.</string>
     <string name="cd_survey_rewards_back">Navigate back to Home</string>
     <string name="cd_survey_rewards_coin">Survey Rewards golden coin icon</string>
 </resources>

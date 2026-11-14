@@ -179,7 +179,21 @@
                             android:textSize="13.5sp"
                             android:textStyle="bold"
                             android:visibility="gone"
-                            tools:text="Congratulations! 500 Coins Added Successfully!" />
+                            tools:text="500 Coins Added Successfully!" />
+
+                        <!-- 24-Hour Cooldown Timer -->
+                        <TextView
+                            android:id="@+id/tv_survey_rewards_cooldown"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:fontFamily="@font/poppins"
+                            android:gravity="center"
+                            android:textColor="@color/gold_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:visibility="gone"
+                            tools:text="Available again in 23:59:59" />
 
                         <!-- Prominent Golden CLAIM Button -->
                         <FrameLayout

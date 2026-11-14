@@ -7,6 +7,9 @@ import android.annotation.SuppressLint;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
@@ -29,23 +32,44 @@ import com.example.databinding.ActivitySurveyRewardsBinding;
 import java.util.UUID;
 
 /**
- * Survey Rewards screen featuring exactly one reward card:
- * - Title: Survey Rewards
- * - Sentence: "Watch a rewarded advertisement and claim your 500 coins!"
- * - Button: CLAIM
- * Credits 500 coins into the centralized Tutor Earn balance (users/{uid}/coins/balance)
- * strictly after official AdMob RewardedAd.OnUserEarnedRewardListener confirmation.
+ * Survey Rewards screen featuring account-based Firebase Realtime Database
+ * integration and strict 24-hour reward claim enforcement (500 coins).
  */
 public class SurveyRewardsActivity extends AppCompatActivity {
 
     public static final int REWARD_COINS = 500;
+    private static final long COUNTDOWN_TICK_MS = 1000L;
 
     private ActivitySurveyRewardsBinding binding;
     private SurveyRewardsAdManager adManager;
-    private CoinBalanceRepository coinBalanceRepository;
+    private SurveyRewardsRepository repository;
 
     private boolean isClaimFlowBusy = false;
     private AnimatorSet ambientAnimatorSet;
+
+    private final Handler cooldownHandler = new Handler(Looper.getMainLooper());
+    private long activeRemainingCooldownMs = 0L;
+    private long lastTickElapsedMs = 0L;
+
+    private final Runnable cooldownTicker = new Runnable() {
+        @Override
+        public void run() {
+            if (binding == null) {
+                return;
+            }
+            long nowElapsed = SystemClock.elapsedRealtime();
+            long delta = Math.max(0L, nowElapsed - lastTickElapsedMs);
+            lastTickElapsedMs = nowElapsed;
+
+            activeRemainingCooldownMs = Math.max(0L, activeRemainingCooldownMs - delta);
+            if (activeRemainingCooldownMs <= 0L) {
+                refreshClaimEligibility();
+                return;
+            }
+            updateCooldownLabel(activeRemainingCooldownMs);
+            cooldownHandler.postDelayed(this, COUNTDOWN_TICK_MS);
+        }
+    };
 
     private int basePaddingHorizontal;
     private int basePaddingTop;
@@ -80,7 +104,7 @@ public class SurveyRewardsActivity extends AppCompatActivity {
 
     private void setupDependencies() {
         adManager = new SurveyRewardsAdManager(this);
-        coinBalanceRepository = CoinBalanceRepository.getInstance(this);
+        repository = new SurveyRewardsRepository(this);
     }
 
     private void applySystemBarInsets() {
@@ -154,8 +178,44 @@ public class SurveyRewardsActivity extends AppCompatActivity {
         });
     }
 
+    private void refreshClaimEligibility() {
+        cooldownHandler.removeCallbacks(cooldownTicker);
+        repository.verifyClaimEligibility(state -> runOnUiThread(() -> {
+            if (binding == null) {
+                return;
+            }
+            if (state.canClaim) {
+                activeRemainingCooldownMs = 0L;
+                binding.tvSurveyRewardsCooldown.setVisibility(View.GONE);
+                setClaimButtonState(true, false, getString(R.string.survey_rewards_claim_500_coins));
+            } else {
+                activeRemainingCooldownMs = state.remainingCooldownMs;
+                updateCooldownLabel(activeRemainingCooldownMs);
+                binding.tvSurveyRewardsCooldown.setVisibility(View.VISIBLE);
+                setClaimButtonState(false, false, getString(R.string.survey_rewards_claim_500_coins));
+                startCooldownTicker();
+            }
+        }));
+    }
+
+    private void startCooldownTicker() {
+        cooldownHandler.removeCallbacks(cooldownTicker);
+        lastTickElapsedMs = SystemClock.elapsedRealtime();
+        cooldownHandler.postDelayed(cooldownTicker, COUNTDOWN_TICK_MS);
+    }
+
+    private void updateCooldownLabel(long remainingMs) {
+        if (binding == null) {
+            return;
+        }
+        String formatted = PrimeSurveyRepository.formatRemainingHms(remainingMs);
+        binding.tvSurveyRewardsCooldown.setText(
+                getString(R.string.survey_rewards_cooldown_remaining, formatted)
+        );
+    }
+
     private void onClaimClicked() {
-        if (isClaimFlowBusy || isFinishing() || isDestroyed()) {
+        if (isClaimFlowBusy || repository.isClaimInFlight() || isFinishing() || isDestroyed()) {
             return;
         }
         isClaimFlowBusy = true;
@@ -175,22 +235,29 @@ public class SurveyRewardsActivity extends AppCompatActivity {
 
             @Override
             public void onRewardVerified() {
-                coinBalanceRepository.creditVerifiedEarning(
-                        CoinEarningSource.SURVEY_REWARDS,
-                        transactionId,
-                        REWARD_COINS,
+                repository.commitVerifiedReward(
                         true,
-                        (success, updatedBalance, message) -> runOnUiThread(() -> {
+                        transactionId,
+                        (success, message, updatedState) -> runOnUiThread(() -> {
                             isClaimFlowBusy = false;
                             if (binding == null) {
                                 return;
                             }
-                            setClaimButtonLoading(false);
                             if (success) {
+                                setClaimButtonLoading(false);
                                 playCoinCelebrateAnimation();
-                                showSuccessMessage(getString(R.string.survey_rewards_success));
+                                showSuccessMessage(message);
+                                refreshClaimEligibility();
                             } else {
+                                setClaimButtonLoading(false);
                                 showErrorMessage(message);
+                                if (!updatedState.canClaim) {
+                                    activeRemainingCooldownMs = updatedState.remainingCooldownMs;
+                                    updateCooldownLabel(activeRemainingCooldownMs);
+                                    binding.tvSurveyRewardsCooldown.setVisibility(View.VISIBLE);
+                                    setClaimButtonState(false, false, getString(R.string.survey_rewards_claim_500_coins));
+                                    startCooldownTicker();
+                                }
                             }
                         })
                 );
@@ -205,6 +272,7 @@ public class SurveyRewardsActivity extends AppCompatActivity {
                     }
                     setClaimButtonLoading(false);
                     showErrorMessage(getString(R.string.survey_rewards_ad_not_completed));
+                    refreshClaimEligibility();
                 });
             }
 
@@ -217,20 +285,28 @@ public class SurveyRewardsActivity extends AppCompatActivity {
                     }
                     setClaimButtonLoading(false);
                     showErrorMessage(getString(R.string.survey_rewards_ad_unavailable));
+                    refreshClaimEligibility();
                 });
             }
         });
     }
 
-    private void setClaimButtonLoading(boolean loading) {
-        binding.btnClaimSurveyReward.setEnabled(!loading);
-        binding.btnClaimSurveyReward.setClickable(!loading);
-        binding.btnClaimSurveyReward.setAlpha(loading ? 0.72f : 1.0f);
+    private void setClaimButtonState(boolean enabled, boolean loading, @NonNull String label) {
+        if (binding == null) {
+            return;
+        }
+        binding.btnClaimSurveyReward.setEnabled(enabled && !loading);
+        binding.btnClaimSurveyReward.setClickable(enabled && !loading);
+        binding.btnClaimSurveyReward.setAlpha((enabled || loading) ? 1.0f : 0.45f);
         binding.claimSurveyRewardProgress.setVisibility(loading ? View.VISIBLE : View.GONE);
         binding.btnClaimSurveyRewardText.setText(
-                loading ? R.string.survey_rewards_loading_ad : R.string.survey_rewards_claim_button
+                loading ? getString(R.string.survey_rewards_loading_ad) : label
         );
-        binding.btnClaimSurveyRewardGlow.setVisibility(loading ? View.INVISIBLE : View.VISIBLE);
+        binding.btnClaimSurveyRewardGlow.setVisibility(enabled && !loading ? View.VISIBLE : View.INVISIBLE);
+    }
+
+    private void setClaimButtonLoading(boolean loading) {
+        setClaimButtonState(!loading, loading, getString(R.string.survey_rewards_claim_500_coins));
     }
 
     private void showSuccessMessage(@NonNull String message) {
@@ -306,6 +382,7 @@ public class SurveyRewardsActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        refreshClaimEligibility();
         if (ambientAnimatorSet != null && ambientAnimatorSet.isPaused()) {
             ambientAnimatorSet.resume();
         }
@@ -313,6 +390,7 @@ public class SurveyRewardsActivity extends AppCompatActivity {
 
     @Override
     protected void onPause() {
+        cooldownHandler.removeCallbacks(cooldownTicker);
         if (ambientAnimatorSet != null && ambientAnimatorSet.isRunning()) {
             ambientAnimatorSet.pause();
         }
@@ -321,6 +399,7 @@ public class SurveyRewardsActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        cooldownHandler.removeCallbacksAndMessages(null);
         if (ambientAnimatorSet != null) {
             ambientAnimatorSet.cancel();
             ambientAnimatorSet = null;
